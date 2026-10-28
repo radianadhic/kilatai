@@ -225,8 +225,8 @@ Fitur khas Kilat AI: **satu pertanyaan dijawab beberapa model sekaligus**, lalu 
 
 **Cara pakai:**
 1. Klik tombol **🏟️ Arena** di kanan atas
-2. Centang 2–4 model peserta + pilih 1 model juri
-3. Klik Simpan (chip berubah jadi **Arena: ON**), lalu chat seperti biasa
+2. **Peserta sudah tercentang otomatis** — aplikasi memilih rekomendasi terbaik dari model yang terpasang (bertanda ⭐), lengkap dengan perkiraan kebutuhan RAM per model. Tombol **⭐ Pakai rekomendasi** mengembalikan pilihan default kapan pun
+3. Pilih juri (default-nya juga rekomendasi terbaik), klik Simpan (chip berubah jadi **Arena: ON**), lalu chat seperti biasa
 4. Setiap model menjawab satu per satu → juri memberi vonis → jawaban terbaik ditandai hijau 🏆
 5. Tidak setuju dengan juri? Klik **👍 Pilih** di jawaban yang menurut Anda terbaik
 

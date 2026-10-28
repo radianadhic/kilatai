@@ -1553,6 +1553,10 @@ body.light ::-webkit-scrollbar-thumb{background:#c3cbdd}
       Saat Mode Arena aktif, tools (buat file) nonaktif.</p>
     <label class="check"><input type="checkbox" id="arEnable"> Aktifkan Mode Arena</label>
     <label>Model peserta (centang 2&ndash;4)</label>
+    <div style="display:flex;align-items:center;gap:9px;margin:4px 0 8px;flex-wrap:wrap">
+      <button class="mini-btn" id="arRecBtn" type="button">&#11088; Pakai rekomendasi</button>
+      <span style="font-size:11px;color:var(--muted)">centang default = rekomendasi terbaik dari model yang terpasang</span>
+    </div>
     <div id="arModels"></div>
     <label>Model juri (menilai &amp; memilih jawaban terbaik)</label>
     <select id="arJudge" style="width:100%;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:13.5px"></select>
@@ -1584,6 +1588,28 @@ var settings=Object.assign({ollamaUrl:'http://localhost:11434',model:'',systemPr
 settings.arena=Object.assign({enabled:false,models:[],judge:''},settings.arena||{});
 settings.cloud=Object.assign({enabled:false,base:'https://openrouter.ai/v1',key:'',model:''},settings.cloud||{});
 var JUDGE_SYS='Kamu adalah juri kompetisi jawaban AI yang objektif. Tugasmu: membaca pertanyaan pengguna dan beberapa kandidat jawaban, lalu memilih SATU jawaban terbaik - yang paling akurat, lengkap, dan membantu. Jangan memihak model mana pun, termasuk dirimu sendiri. Balas dalam Bahasa Indonesia, langsung, dengan format yang diminta persis.';
+var RECOMMENDED=['qwen3:8b','qwen3:4b','gemma3:12b','deepseek-r1:8b','qwen3:14b','llama3.2:3b','gpt-oss:20b','deepseek-r1:14b','gemma3:27b','qwen3:32b'];
+function recommendModels(){
+  var models=window._modelsCache||[];
+  var names=models.map(function(m){return m.name;});
+  var pick=[];
+  RECOMMENDED.forEach(function(r){if(names.indexOf(r)>=0&&pick.length<3)pick.push(r);});
+  if(pick.length<2){
+    models.slice().sort(function(a,b){return (b.size||0)-(a.size||0);})
+      .forEach(function(m){
+        if(pick.length<3&&pick.indexOf(m.name)<0)pick.push(m.name);
+      });
+  }
+  return pick;
+}
+function judgeRecommend(rec){
+  var models=window._modelsCache||[];
+  var names=models.map(function(m){return m.name;});
+  var pref=['qwen3:8b','qwen3:4b','qwen3:14b','gemma3:12b'];
+  for(var i=0;i<pref.length;i++){if(names.indexOf(pref[i])>=0)return pref[i];}
+  if(rec&&rec.length)return rec[0];
+  return settings.model||'';
+}
 var chats=loadLS('arena.chats',[]);
 var cur=null,streaming=false,controller=null,stick=true;
 
@@ -2044,15 +2070,21 @@ $('#themeBtn').addEventListener('click',function(){
 });
 function renderArenaChecks(){
   var box=$('#arModels');var models=window._modelsCache||[];
+  var sel=settings.arena.models.slice();
+  if(!sel.length)sel=recommendModels();
   box.innerHTML=models.length?models.map(function(m){
-    var c=settings.arena.models.indexOf(m.name)>=0?' checked':'';
+    var c=sel.indexOf(m.name)>=0?' checked':'';
+    var rec=RECOMMENDED.indexOf(m.name)>=0;
+    var ram=(m.size<3.5e9)?'RAM 8 GB':(m.size<7e9)?'RAM 16 GB':(m.size<12e9)?'RAM 24 GB':'RAM 32 GB+';
     return '<label class="model-check"><input type="checkbox" data-ar="'+esc(m.name)+'"'+c+
-      '><span class="mc-name">'+esc(m.name)+'</span><span class="mc-size">'+fmtSize(m.size||0)+'</span></label>';
+      '><span class="mc-name">'+esc(m.name)+(rec?' &#11088;':'')+'</span><span class="mc-size">'+
+      fmtSize(m.size||0)+' &bull; '+ram+(rec?' &bull; direkomendasikan':'')+'</span></label>';
   }).join(''):'<div class="files-empty">Belum ada model terpasang.<br>Install dulu lewat Ollama.</div>';
 }
 function renderJudgeSel(){
   var models=window._modelsCache||[];
-  var v=settings.arena.judge||settings.model||'';
+  var v=settings.arena.judge||'';
+  if(!v||!models.some(function(m){return m.name===v;}))v=judgeRecommend(recommendModels());
   $('#arJudge').innerHTML=models.map(function(m){
     return '<option value="'+esc(m.name)+'"'+(m.name===v?' selected':'')+'>'+esc(m.name)+'</option>';
   }).join('');
@@ -2077,6 +2109,15 @@ $('#saveArenaBtn').addEventListener('click',function(){
   updateArenaChip();renderSide();
   toast(settings.arena.enabled?'&#127951;&#65039; Mode Arena aktif - '+sel.length+' model peserta':'Mode Arena nonaktif');
 });
+$('#arRecBtn').addEventListener('click',function(){
+  var rec=recommendModels();
+  document.querySelectorAll('#arModels input[data-ar]').forEach(function(cb){
+    cb.checked=rec.indexOf(cb.getAttribute('data-ar'))>=0;
+  });
+  var j=judgeRecommend(rec);
+  if(j)$('#arJudge').value=j;
+  toast('&#11088; Rekomendasi: '+rec.join(' + '));
+});
 
 /* ================= model ================= */
 function loadModels(){
@@ -2097,7 +2138,7 @@ function loadModels(){
       if(models.length){
         modelSel.innerHTML=models.map(function(m){
           var sz=m.size?' &bull; '+(m.size/1073741824).toFixed(1)+' GB':'';
-          return '<option value="'+esc(m.name)+'">'+esc(m.name)+sz+'</option>';}).join('');
+          return '<option value="'+esc(m.name)+'">'+esc(m.name)+sz+(RECOMMENDED.indexOf(m.name)>=0?' \u2b50':'')+'</option>';}).join('');
         var found=models.some(function(m){return m.name===settings.model;});
         if(!found){settings.model=models[0].name;saveLS('arena.settings',settings);}
         modelSel.value=settings.model;
