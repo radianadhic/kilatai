@@ -1,0 +1,14 @@
+# Jangan ikutkan ke image Docker:
+__pycache__/
+*.pyc
+*.pyo
+# Kunci rahasia TIDAK boleh terkunci di dalam image - pakai env/mount saja
+KUNCI-EMBED.txt
+# Artefak build & file host-only
+*.zip
+*.bat
+workspace/
+.git/
+.dockerignore
+Dockerfile
+docker-compose.yml

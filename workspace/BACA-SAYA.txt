@@ -1,0 +1,6 @@
+Folder workspace untuk Arena Lokal
+=================================
+
+File-file yang dibuat oleh AI akan tersimpan di sini.
+Anda juga bisa memindahkan file Anda sendiri ke folder ini,
+lalu meminta AI untuk membacanya ("baca file ...").

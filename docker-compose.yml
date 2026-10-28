@@ -1,0 +1,56 @@
+# ============================================================
+# Kilat AI + Ollama dalam satu perintah
+#
+# Cara pakai (mode LENGKAP - Ollama ikut di container):
+#   docker compose up -d --build
+#   -> buka http://localhost:8080
+#   -> ambil model:  docker compose exec ollama ollama pull qwen3:8b
+#
+# Mode HEMAT (Ollama sudah terpasang di komputer host):
+#   1. Hapus/comment service "ollama" + "volumes: ollama-models" di bawah
+#   2. Ganti ARENA_OLLAMA menjadi http://host.docker.internal:11434
+#   3. docker compose up -d --build
+# ============================================================
+services:
+  kilat:
+    build: .
+    container_name: kilat-ai
+    ports:
+      - "8080:8080"
+    environment:
+      # Menunjuk service "ollama" di file ini (jaringan internal compose)
+      ARENA_OLLAMA: http://ollama:11434
+      # ---- Opsional: pengamanan (hapus tanda # untuk mengaktifkan) ----
+      # ARENA_EMBED_KEY: kunci-rahasia-anda
+      # ARENA_ALLOWED_ORIGINS: "*"
+      # ARENA_WHISPER_URL: http://host.docker.internal:8081/inference
+    volumes:
+      # File buatan AI tersimpan di folder host (tetap ada walau container dihapus)
+      - ./workspace:/app/workspace
+      # Plugin integrasi (mis. treasury) - edit di host, langsung aktif setelah restart
+      - ./plugins:/app/plugins
+      # Konteks aplikasi untuk AI - edit di host, berlaku tanpa rebuild
+      - ./PENGETAHUAN.md:/app/PENGETAHUAN.md
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kilat-ollama
+    volumes:
+      # Model tersimpan di docker volume (tidak hilang walau container dibuat ulang)
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # ---- GPU NVIDIA (opsional, butuh nvidia-container-toolkit di host) ----
+    # Tanpa ini Ollama tetap jalan mode CPU.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama-models:

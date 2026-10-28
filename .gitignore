@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Rahasia - JANGAN di-commit
+KUNCI-EMBED.txt
+
+# Artefak & paket
+*.zip
+nohup.out
+
+# Data uji/plugin yang dihasilkan runtime
+workspace/pengajuan-demo.json
+
+# OS
+.DS_Store
+Thumbs.db
