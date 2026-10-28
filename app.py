@@ -1162,6 +1162,7 @@ UI_HTML = r"""<!doctype html>
   --text:#e7ebf3; --muted:#8b93a7; --accent:#6d7cff; --accent2:#9f6dff;
   --user:#1d2537; --ok:#3ecf8e; --err:#ff6b6b; color-scheme:dark;
 }
+[hidden]{display:none!important}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
