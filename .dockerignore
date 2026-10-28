@@ -12,3 +12,4 @@ workspace/
 .dockerignore
 Dockerfile
 docker-compose.yml
+data/

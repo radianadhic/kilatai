@@ -11,6 +11,7 @@
 | File | Fungsi |
 |---|---|
 | `app.py` | Aplikasi utama (satu file, tanpa instalasi tambahan) |
+| `storage.py` | Lapisan penyimpanan: SQLite (database) + Valkey (cache & antrean event) |
 | `mock-ollama.py` | Mode demo — coba semua fitur tanpa unduh model |
 | `Mulai-Kilat.bat` | Tombol mulai untuk Windows (pakai Ollama asli) |
 | `Mulai-Demo.bat` | Tombol mulai untuk Windows (mode demo) |
@@ -445,6 +446,43 @@ Kilat AI + Ollama memang dirancang untuk itu — **tidak ada komponen yang butuh
 **3. Di komputer offline:** jalankan `Mulai-Kilat.bat` (atau `python app.py`) — selesai. Matikan Mode Cloud (default memang mati).
 
 **Konsekuensi offline:** pengetahuan model terbatas pada data latihnya (tidak bisa cari info baru) — jadi penyisipan `PENGETAHUAN.md` + dokumen di workspace menjadi **makin penting** untuk menjawab pertanyaan spesifik perusahaan Anda.
+
+---
+
+## 🗄️ Penyimpanan data (gaya platform AI modern)
+
+Kilat AI menyimpan data secara **berlapis**, meniru arsitektur platform AI besar dalam skala lokal — tanpa Redis:
+
+| Lapisan | Implementasi | Isi |
+|---|---|---|
+| **Database relasional** | SQLite (`data/kilat.db`) | Percakapan, pesan, **jejak audit** (tool yang dipanggil, file yang ditulis) |
+| **Cache & antrean event** | **Valkey** (pengganti Redis) | Cache daftar model/file (TTL singkat) + antrean event audit `events:audit` (1000 terakhir) |
+| **Object storage** | Folder `workspace/` | File buatan AI & upload |
+| **Cadangan lokal** | localStorage browser | Riwayat tetap ada walau server mati (fallback otomatis) |
+
+**Konsep pentingnya:**
+- **Riwayat chat kini tersimpan di server** (SQLite) — bukan hanya di browser. Buka dari browser/perangkat mana pun di jaringan yang sama, riwayatnya tetap ada. localStorage otomatis jadi cadangan bila server tidak terjangkau.
+- **Valkey bersifat opsional** — kalau tidak berjalan, semua fitur tetap bekerja (cache dilewati, event hanya masuk SQLite). Tidak ada yang rusak.
+- **Jejak audit** setiap aksi agen (tool dipanggil, file ditulis/diupload, percakapan disimpan/dihapus) tercatat di tabel `audit` + antrean Valkey — penting untuk kepatuhan treasury.
+
+**Menjalankan Valkey (opsional tapi disarankan):**
+```bash
+# Debian/Ubuntu: sudo apt-get install -y valkey-server
+valkey-server                        # default port 6379
+# atau via Docker: docker run -p 6379:6379 valkey/valkey
+```
+Lalu jalankan aplikasi seperti biasa — status "Valkey: terhubung" muncul di banner terminal.
+
+**Variabel lingkungan:**
+
+| Variabel | Default | Fungsi |
+|---|---|---|
+| `ARENA_DB_PATH` | `data/kilat.db` | Lokasi file database SQLite |
+| `ARENA_VALKEY_URL` | `redis://127.0.0.1:6379` | Alamat server Valkey |
+
+**Backup & migrasi:** cukup salin `data/kilat.db` + folder `workspace/` — itu seluruh data Anda.
+
+**Kenapa Valkey, bukan Kafka?** Valkey adalah fork komunitas Redis (protokol sama, ringan, satu binari kecil) — pas untuk cache & antrean aplikasi lokal. Kafka adalah platform *event streaming* terdistribusi ber-JVM (ratusan MB, desain untuk aliran event lintas sistem skala besar) — overkill untuk aplikasi desktop/server kecil, tapi cocok di lapisan infrastruktur perusahaan jika kelak sistem treasury Anda butuh aliran event lintas aplikasi. Arsitektur `storage.py` sengaja modular: fungsi `event_valkey()` bisa diganti producer Kafka tanpa menyentuh bagian aplikasi lain.
 
 ---
 

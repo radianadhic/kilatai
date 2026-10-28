@@ -20,6 +20,8 @@ services:
     environment:
       # Menunjuk service "ollama" di file ini (jaringan internal compose)
       ARENA_OLLAMA: http://ollama:11434
+      # Valkey = cache & antrean event (pengganti Redis)
+      ARENA_VALKEY_URL: redis://valkey:6379
       # ---- Opsional: pengamanan (hapus tanda # untuk mengaktifkan) ----
       # ARENA_EMBED_KEY: kunci-rahasia-anda
       # ARENA_ALLOWED_ORIGINS: "*"
@@ -27,6 +29,8 @@ services:
     volumes:
       # File buatan AI tersimpan di folder host (tetap ada walau container dihapus)
       - ./workspace:/app/workspace
+      # Database SQLite (percakapan + jejak audit) persisten di host
+      - ./data:/app/data
       # Plugin integrasi (mis. treasury) - edit di host, langsung aktif setelah restart
       - ./plugins:/app/plugins
       # Konteks aplikasi untuk AI - edit di host, berlaku tanpa rebuild
@@ -34,6 +38,7 @@ services:
     restart: unless-stopped
     depends_on:
       - ollama
+      - valkey
 
   ollama:
     image: ollama/ollama:latest
@@ -51,6 +56,12 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu]
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: kilat-valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
 
 volumes:
   ollama-models:

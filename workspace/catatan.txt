@@ -1,0 +1,19 @@
+=== CATATAN HARIAN ===
+Hari ini:
+
+Pagi
+- [ ] Sarapan sehat
+- [ ] Cek pesan & email
+- [ ] Rencanakan 3 prioritas hari ini
+
+Siang
+- [ ] Kerja fokus 2 jam (matikan notifikasi)
+- [ ] Istirahat 15 menit setiap sesi
+
+Malam
+- [ ] Baca 10 halaman buku
+- [ ] Tulis 3 hal yang disyukuri hari ini
+- [ ] Rencanakan besok
+
+---
+Dibuat otomatis oleh Kilat AI (mode demo).

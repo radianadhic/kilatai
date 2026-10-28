@@ -19,3 +19,4 @@ workspace/pengajuan-demo.json
 .DS_Store
 Thumbs.db
 node_modules/
+data/

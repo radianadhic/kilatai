@@ -22,6 +22,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
+import storage  # lapisan penyimpanan: SQLite (relasional) + Valkey (cache & event)
+
 # ----------------------------------------------------------------------------
 # Konfigurasi
 # ----------------------------------------------------------------------------
@@ -38,6 +40,10 @@ NO_OPEN = os.environ.get("ARENA_NO_OPEN", "") == "1"
 # Server Whisper (opsional) untuk input suara 100% offline (mis. whisper.cpp).
 # Contoh: ARENA_WHISPER_URL="http://127.0.0.1:8081/inference"
 WHISPER_URL = os.environ.get("ARENA_WHISPER_URL", "").strip()
+
+# --- Penyimpanan gaya platform modern (opsional Valkey, wajib SQLite) ---
+DB_PATH = os.environ.get("ARENA_DB_PATH") or os.path.join(BASE_DIR, "data", "kilat.db")
+VALKEY_URL = os.environ.get("ARENA_VALKEY_URL") or "redis://127.0.0.1:6379"
 
 # --- Untuk embed di website lain ---
 # Asal (origin) yang diizinkan memanggil API. Default "*" (semua).
@@ -247,6 +253,8 @@ def run_tool(name, args):
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(content)
             rel = os.path.relpath(p, WORKSPACE).replace(os.sep, "/")
+            storage.audit("tool.write_file", rel)
+            storage.cache_invalidate("cache:files")
             return True, "Berhasil menulis file '%s' (%d karakter)." % (rel, len(content))
 
         # tool dari plugin (integrasi aplikasi lain, mis. treasury)
@@ -602,7 +610,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGINS)
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
             "Content-Type, X-Filename, X-Embed-Key, Authorization",
@@ -635,6 +643,20 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        q = parse_qs(parsed.query)
+        if parsed.path == "/api/history":
+            cid = q.get("id", [""])[0]
+            if not cid:
+                self._send_json({"error": "parameter id wajib"}, 400)
+                return
+            storage.delete_conversation(cid)
+            storage.audit("chat.deleted", cid)
+            self._send_json({"ok": True})
+        else:
+            self._send_json({"error": "Tidak ditemukan."}, 404)
 
     # ---- util ----
     def send_event(self, obj):
@@ -751,16 +773,33 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
 
+        elif path == "/api/history":
+            cid = q.get("id", [""])[0]
+            if cid:
+                self._send_json({"id": cid, "messages": storage.get_messages(cid)})
+            else:
+                self._send_json({"conversations": storage.list_conversations()})
+
         elif path == "/api/models":
             url = (q.get("url", [""])[0] or DEFAULT_OLLAMA).strip()
             if not url.startswith(("http://", "https://")):
                 self._send_json({"models": [], "error": "Alamat Ollama tidak valid."})
                 return
+            ckey = "cache:models:" + url
+            cached = storage.cache_get(ckey)
+            if cached:
+                try:
+                    self._send_json(json.loads(cached))
+                    return
+                except ValueError:
+                    pass
             try:
                 req = urllib.request.Request(url.rstrip("/") + "/api/tags", method="GET")
                 with _OPENER.open(req, timeout=5) as r:
                     data = json.loads(r.read().decode("utf-8", "replace"))
-                self._send_json({"models": data.get("models") or []})
+                payload = {"models": data.get("models") or []}
+                storage.cache_set(ckey, 15, json.dumps(payload, ensure_ascii=False))
+                self._send_json(payload)
             except urllib.error.URLError:
                 self._send_json(
                     {
@@ -772,7 +811,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"models": [], "error": str(e)[:200]})
 
         elif path == "/api/files":
-            self._send_json({"files": list_workspace()})
+            cached = storage.cache_get("cache:files")
+            if cached:
+                try:
+                    self._send_json(json.loads(cached))
+                    return
+                except ValueError:
+                    pass
+            payload = {"files": list_workspace()}
+            storage.cache_set("cache:files", 3, json.dumps(payload, ensure_ascii=False))
+            self._send_json(payload)
 
         elif path == "/api/file":
             name = q.get("name", [""])[0]
@@ -833,6 +881,21 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return
 
+        if parsed.path == "/api/history":
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                self._send_json({"error": "Body JSON tidak valid."}, 400)
+                return
+            if not body.get("id"):
+                self._send_json({"error": "id percakapan wajib."}, 400)
+                return
+            storage.save_conversation(body)
+            storage.audit("chat.saved", "%s | %s" % (body.get("id"), str(body.get("title") or "")[:60]))
+            self._send_json({"ok": True})
+            return
+
         if parsed.path == "/api/upload":
             name = unquote(self.headers.get("X-Filename") or "")
             try:
@@ -854,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:
                 self._send_json({"error": "Gagal menyimpan: %s" % e}, 500)
                 return
+            storage.audit("file.uploaded", name)
+            storage.cache_invalidate("cache:files")
             self._send_json({"ok": True, "name": name, "size": n})
             return
 
@@ -1612,6 +1677,7 @@ function judgeRecommend(rec){
   return settings.model||'';
 }
 var chats=loadLS('arena.chats',[]);
+var serverOK=false;
 var cur=null,streaming=false,controller=null,stick=true;
 
 var msgCol=$('#msgCol'),msgBox=$('#messages'),emptyBox=$('#empty'),input=$('#input'),
@@ -1752,19 +1818,57 @@ msgBox.addEventListener('scroll',function(){
 function newChat(){
   stopStream();
   cur={id:uid(),title:'',created:Date.now(),messages:[]};
-  chats.unshift(cur);saveLS('arena.chats',chats);
+  chats.unshift(cur);saveLS('arena.chats',chats);syncServer();
   renderSide();renderMsgs();input.focus();
 }
 function openChat(id){
   stopStream();
   for(var i=0;i<chats.length;i++){if(chats[i].id===id){cur=chats[i];break;}}
-  renderSide();renderMsgs();
+  renderSide();
   document.body.classList.remove('side-open');
+  if(serverOK&&cur&&cur._srv&&!cur.messages.length){loadConvServer(id);return;}
+  renderMsgs();
+}
+function loadConvServer(id){
+  fetch('/api/history?id='+encodeURIComponent(id)).then(function(r){return r.json();})
+   .then(function(d){
+     if(cur&&cur.id===id&&d&&d.messages){cur.messages=d.messages;cur._srv=false;}
+     renderMsgs();
+   }).catch(function(){renderMsgs();});
+}
+function syncServer(){
+  if(!serverOK||!cur)return;
+  if(!cur.messages||!cur.messages.length)return;
+  if(!chats.some(function(c){return c.id===cur.id;}))return;
+  try{
+    fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:cur.id,title:cur.title||'',created:cur.created,messages:cur.messages})})
+      .catch(function(){});
+  }catch(e){}
+}
+function bootHistory(){
+  fetch('/api/history').then(function(r){return r.json();}).then(function(d){
+    serverOK=true;
+    var list=(d&&d.conversations)||[];
+    if(list.length){
+      chats=list.map(function(c){return {id:c.id,title:c.title,created:c.created,messages:[],_srv:true};});
+      cur=chats[0];
+    }
+    renderSide();
+    if(!chats.length)newChat();
+    else{renderMsgs();if(cur&&cur._srv)loadConvServer(cur.id);}
+  }).catch(function(){
+    serverOK=false;
+    renderSide();
+    if(!chats.length)newChat();
+    else{cur=chats[0];renderMsgs();}
+  });
 }
 function delChat(ev,id){
   ev.stopPropagation();
   chats=chats.filter(function(c){return c.id!==id;});
-  saveLS('arena.chats',chats);
+  saveLS('arena.chats',chats);syncServer();
+  if(serverOK)fetch('/api/history?id='+encodeURIComponent(id),{method:'DELETE'}).catch(function(){});
   if(!chats.length){newChat();return;}
   if(!cur||cur.id===id)cur=chats[0];
   renderSide();renderMsgs();
@@ -1795,7 +1899,7 @@ function sendMsg(text){
   if(!cur)newChat();
   cur.messages.push({role:'user',content:text});
   if(!cur.title){cur.title=text.slice(0,60);renderSide();}
-  saveLS('arena.chats',chats);
+  saveLS('arena.chats',chats);syncServer();
   updateEmpty();
   appendMsg(cur.messages[cur.messages.length-1]);
 
@@ -1854,7 +1958,7 @@ function sendMsg(text){
     else{ai.error=(e&&e.message)||'Koneksi ke aplikasi gagal.';}
   }).then(function(){
     ai.done=true;streaming=false;controller=null;setSendState();paint();
-    saveLS('arena.chats',chats);renderSide();
+    saveLS('arena.chats',chats);syncServer();renderSide();
     if(ai.events&&ai.events.length)refreshFiles();
   });
 }
@@ -1917,7 +2021,7 @@ function sendArena(text){
   if(!cur)newChat();
   cur.messages.push({role:'user',content:text});
   if(!cur.title){cur.title=text.slice(0,60);renderSide();}
-  saveLS('arena.chats',chats);
+  saveLS('arena.chats',chats);syncServer();
   updateEmpty();
   appendMsg(cur.messages[cur.messages.length-1]);
 
@@ -1979,7 +2083,7 @@ function sendArena(text){
     am.done=true;am.judging=false;am.active=-1;
     am.answers.forEach(function(a){a.content=String(a.content||'').slice(0,6000);});
     paintArena(wrap,am);
-    saveLS('arena.chats',chats);renderSide();
+    saveLS('arena.chats',chats);syncServer();renderSide();
   }
 
   runNext(0);
@@ -2384,7 +2488,7 @@ msgBox.addEventListener('click',function(e){
   if(pb){
     var wm=pb.closest('.msg');var mm=wm&&wm.__arena;
     if(mm){mm.verdict={pick:+pb.getAttribute('data-pick'),judge:'',reason:'Dipilih manual oleh Anda.',manual:true};
-      mm.judging=false;mm.done=true;paintArena(wm,mm);saveLS('arena.chats',chats);renderSide();toast('&#128077; Jawaban dipilih');}
+      mm.judging=false;mm.done=true;paintArena(wm,mm);saveLS('arena.chats',chats);syncServer();renderSide();toast('&#128077; Jawaban dipilih');}
     return;
   }
   var ah=e.target.closest('.ac-head');
@@ -2427,9 +2531,7 @@ function copyText(t){
 }
 
 /* ================= init ================= */
-renderSide();
-if(!chats.length)newChat();
-else{cur=chats[0];renderMsgs();}
+bootHistory();
 updateToolsChip();updateArenaChip();applyTheme();setSendState();
 loadModels();refreshFiles();
 autoGrow();input.focus();
@@ -2447,6 +2549,7 @@ def main():
     global PLUGINS
     os.makedirs(WORKSPACE, exist_ok=True)
     PLUGINS = _load_plugins()
+    storage.init(DB_PATH, VALKEY_URL)
     readme = os.path.join(WORKSPACE, "BACA-SAYA.txt")
     if not os.path.exists(readme):
         try:
@@ -2487,6 +2590,8 @@ def main():
     else:
         print("  Kunci embed     : nonaktif (opsional - lihat PANDUAN.md)")
     print("  Folder workspace: %s" % WORKSPACE)
+    print("  Database SQLite : %s" % storage.DB_PATH)
+    print("  Valkey          : %s" % ("terhubung - cache & antrean event aktif" if storage.valkey_ok() else "tidak aktif (opsional) - lihat PANDUAN.md"))
     print("  Plugin integrasi: %d aktif%s" % (
         len(PLUGINS),
         (" (" + ", ".join(p["file"] for p in PLUGINS) + ")") if PLUGINS else "",
